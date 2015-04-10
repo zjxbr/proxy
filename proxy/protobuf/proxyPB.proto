@@ -1,0 +1,9 @@
+package com.puns.proxy.httpserver;
+
+message ProxyBean {
+  required string host = 1;
+  required int32 port = 2;
+  optional string userName = 3;
+  optional string password = 4;
+  required int64 lastVisitTime = 5;
+}
