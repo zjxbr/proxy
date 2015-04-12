@@ -3,7 +3,6 @@ package com.puns.proxy.httpserver;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufProcessor;
-import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -11,6 +10,10 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOption;
+
+import java.io.IOException;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,9 +26,10 @@ import com.puns.proxy.util.URLUtils;
 
 /**
  * @author zjx
- * @warning 继承自SimpleChannelInboundHandler，不能覆盖channelread方法。必须卸载channelread0中
  */
 public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
+
+	private static final int PROXY_CONNECT_TIMEOUT = 4000;
 
 	private static final Logger LOG = LoggerFactory
 			.getLogger(HttpServerFrontendHandler.class);
@@ -34,26 +38,38 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 
 	private static final String HTTP_988_PROXYMAXTRY = "HTTP/1.1 988 PROXYMAXTRY\r\n";
 
-	private static volatile int channelInWorkingCnt = 0;
+	private static AtomicInteger channelInWorkingCnt = new AtomicInteger();
 	private static final int maxActive = 100;
 
-	private static final int GET_PROXY_MAX_TRY_CNT = 5;
+	private static final int PROXY_MAXRETRY_CNT;
 
 	private static final ProvideProxy provideProxy = ProvideProxyByHeap
 			.getInstance();
 
 	private volatile Channel outboundChannel;
 
-	// 连接数超过限制，则直接回写msg
-	// 否则去做channel read 处理
+	static {
+		// init resource
+		ClassLoader.getSystemResourceAsStream("property.properties");
+		Properties properties = new Properties();
+		try {
+			properties.load(ClassLoader
+					.getSystemResourceAsStream("property.properties"));
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		String proxyMaxRetrCnt = properties.getProperty("proxy.maxretry.cnt");
+		PROXY_MAXRETRY_CNT = Integer.valueOf(proxyMaxRetrCnt.trim());
+	}
+
 	@Override
 	public void channelActive(final ChannelHandlerContext ctx) throws Exception {
 
-		// System.out.println("Thread cnt : " + Thread.activeCount());
-		// 判断在工作的channel是否已经超过限制了，如果超过了，就返回LOCKED并且closechannel
-		if (channelInWorkingCnt >= maxActive) {
+		// if over the max connection, return 987 code.
+		// this is design for spider.
+		if (channelInWorkingCnt.get() >= maxActive) {
 
-			LOG.warn("too many connections.");
+			LOG.warn("Too many connections.");
 
 			ByteBuf byteBuf = ctx.alloc().heapBuffer(
 					HTTP_987_OVER_MAXCONN.getBytes().length);
@@ -62,7 +78,7 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 			ctx.channel().writeAndFlush(byteBuf);
 			ctx.channel().close();
 		} else {
-			channelInWorkingCnt++;
+			channelInWorkingCnt.incrementAndGet();
 			ctx.channel().read();
 		}
 
@@ -76,10 +92,14 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 
 	@Override
 	public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+		// active http request --
+		channelInWorkingCnt.decrementAndGet();
 		if (outboundChannel != null) {
 			closeOnFlush(outboundChannel);
 		}
-		System.out.println("inbound channel inactive");
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("inbound channel inactive");
+		}
 	}
 
 	/**
@@ -97,16 +117,19 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 	public void channelRead(final ChannelHandlerContext ctx, final Object msg)
 			throws Exception {
 		final ByteBuf byteBuf = (ByteBuf) msg;
+		if (LOG.isDebugEnabled()) {
+			// print the http request
+			LOG.debug(ByteBufUtil0.byteBufToString(byteBuf));
+		}
+
 		// if the outboundchannel is active,
 		// continueours write to the outboundchannel.
 		if (outboundChannel != null && outboundChannel.isActive()) {
-			if (LOG.isDebugEnabled()) {
-				LOG.debug(ByteBufUtil0.byteBufToString(byteBuf));
-			}
 			outboundChannel.writeAndFlush(msg);
 			return;
 		}
 
+		// get the domain
 		byteBuf.markReaderIndex();
 		int indexCRLF = byteBuf.forEachByte(ByteBufProcessor.FIND_CRLF);
 		byte[] requestURLBytes = new byte[indexCRLF];
@@ -114,58 +137,39 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 		byteBuf.resetReaderIndex();
 		String firstLine = new String(requestURLBytes);
 		String domain = URLUtils.getDomain(firstLine);
-		LOG.info("request  : " + firstLine);
+		LOG.info("request to: " + firstLine);
 
-		if (LOG.isDebugEnabled()) {
-			// print the http request
-			LOG.debug(ByteBufUtil0.byteBufToString(byteBuf));
-		}
+		tryToConnectProxy(ctx, byteBuf, domain, PROXY_MAXRETRY_CNT);
 
-		tryToConnectProxy(ctx, byteBuf, domain, 3);
-
-		channelInWorkingCnt--;
 	}
 
 	/**
-	 * @function 试图连接代理服务器
-	 * @param inboundChannel
+	 * @param ctx
+	 *            inboundChannel ctx
 	 * @param request
 	 * @param domain
-	 *            试图连接的域名
 	 * @param retryCntRemain
-	 *            重试次数
 	 */
 	private void tryToConnectProxy(ChannelHandlerContext ctx, ByteBuf request,
 			String domain, int retryCntRemain) {
 
-		// retry次数到达，则返回
-		if (retryCntRemain-- <= 0) {
-			LOG.warn("重试次数到达上限，连接到代理失败.");
-			// 做失败处理
-			// 回写特殊return code
-			// 把request clear，然后写入内容
+		// if over max retry count
+		// report fail and return
+		if (retryCntRemain-- < 0) {
+			LOG.warn("Try to connect to proxy over times!");
 			request.clear();
-
 			request.writeBytes(HTTP_988_PROXYMAXTRY.getBytes());
-			ctx.writeAndFlush(request).addListener(new ChannelFutureListener() {
-				@Override
-				public void operationComplete(ChannelFuture future)
-						throws Exception {
-					if (LOG.isDebugEnabled()) {
-						LOG.debug("重试次数到达上限，连接到代理失败,写入回client: "
-								+ future.isSuccess());
-					}
-					future.channel().close();
-				}
-			});
+			ctx.writeAndFlush(request).addListener(ChannelFutureListener.CLOSE);
 			return;
 		}
-		// 获得代理
-		OuterProxy outerProxy = provideProxy.getProxy(domain);
-		// 如果获取代理失败，则返回
+
+		// get the proxy
+		final OuterProxy outerProxy = provideProxy.getProxy(domain);
+		// get proxy failed, then retry
 		if (outerProxy == null) {
 			if (LOG.isDebugEnabled()) {
-				LOG.debug("获取代理失败,剩余重试次数:" + retryCntRemain);
+				LOG.debug("Get proxy fail , remain retry count :"
+						+ retryCntRemain);
 			}
 			tryToConnectProxy(ctx, request, domain, retryCntRemain);
 			return;
@@ -174,19 +178,16 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 		final Channel inboundChannel = ctx.channel();
 
 		b.group(inboundChannel.eventLoop())
-				// 不显示log，打印log需要在这里打开注释
-				// .handler(new LoggingHandler(LogLevel.INFO))
 				.channel(inboundChannel.getClass())
-				// http 解压缩的handler
 				.handler(
-						(new HttpServerBackendHandler(inboundChannel,
-								outerProxy)))
+						new HttpServerBackendHandler(inboundChannel, outerProxy))
 				.option(ChannelOption.AUTO_READ, true)
-				// 设置connect time out 为4s
-				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 4000);
+				// set the connection time out MILLIS
+				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS,
+						PROXY_CONNECT_TIMEOUT);
 
-		// System.out.println("connecting to " + proxyBean);
-		ChannelFuture f = b.connect(outerProxy.getHost(), outerProxy.getPort());
+		final ChannelFuture f = b.connect(outerProxy.getHost(),
+				outerProxy.getPort());
 
 		outboundChannel = f.channel();
 		f.addListener(new ConnectListener(ctx, outboundChannel, request, this,
@@ -194,8 +195,11 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 
 	}
 
+	/**
+	 * @author zjx
+	 * @function if connection to proxy failed, there will be a retry move.
+	 */
 	public class ConnectListener implements ChannelFutureListener {
-		// private final Channel fromChannel;
 		private final ChannelHandlerContext ctx;
 		private final Channel connectedChannel;
 		private final ByteBuf request;
@@ -208,7 +212,6 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 				Channel connectedChannel, ByteBuf request,
 				HttpServerFrontendHandler httpServerFrontendHandler,
 				OuterProxy outerProxy, String domain, int retryCntRemain) {
-			// this.fromChannel = ctx.channel();
 			this.ctx = ctx;
 			this.connectedChannel = connectedChannel;
 			this.request = request;
@@ -220,41 +223,41 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 
 		@Override
 		public void operationComplete(ChannelFuture future) {
-			// System.out.println("连接到代理:" + future.isSuccess());
 			if (future.isSuccess()) {
-				// 连接成功，设置为true
-				// 连接到代理成功，设置保存连接时间
-				LOG.info("连接到代理成功:" + outerProxy.getHost() + ","
-						+ outerProxy.getPort());
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Connected to the proxy succuss : "
+							+ outerProxy.toString());
+				}
+				// write to the outbound
 				connectedChannel.writeAndFlush(request).addListener(
 						new ChannelFutureListener() {
 							@Override
 							public void operationComplete(ChannelFuture future) {
 								if (future.isSuccess()) {
-									// was able to flush out data, start to
-									// read the
-									// next chunk
-									LOG.info("请求写入到代理成功:"
-											+ outerProxy.getHost() + ","
-											+ outerProxy.getPort());
+									if (LOG.isDebugEnabled()) {
+										LOG.debug("Write to the proxy success! "
+												+ outerProxy.toString());
+									}
+									// inbound channel continue reading.
 									ctx.channel().read();
 								} else {
-									LOG.error("！！！请求写入到代理失败！！！:"
-											+ outerProxy.getHost() + ","
-											+ outerProxy.getPort());
+									LOG.error("Write to the proxy failed :"
+											+ outerProxy.toString());
+									// if write to proxy failed, do not retry.
+									// just close the channel.
+									// I think there should be more task to do.
 									future.channel().close();
 								}
 							}
 						});
 			} else {
-				// 连接不成功，一定要关掉连接的channel，否则会发生异常。
-				// 异常是，connectd channel 绑定到了bootstrap，
-				// 然而boot strap 要去连接其他channel，
-				// 这样就会造成channel promise 失效，具体原因不太明白。
-				LOG.warn("连接到代理失败:" + outerProxy.getHost() + ","
-						+ outerProxy.getPort());
+				// If connect to the proxy fail, should close the channel, or
+				// there will be exception rise.
+				// I haven't know the reason yet.
+				LOG.warn("Connected to the proxy failed : "
+						+ outerProxy.toString());
 				connectedChannel.close();
-				// System.out.println("连接失败，重新链接");
+				// retry
 				httpServerFrontendHandler.tryToConnectProxy(ctx, request,
 						domain, retryCntRemain);
 			}

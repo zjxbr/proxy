@@ -10,10 +10,7 @@ public class HttpServerInitializer extends ChannelInitializer<SocketChannel> {
 
 	@Override
 	public void initChannel(SocketChannel ch) {
-		// ch.pipeline().addLast(new HttpServerCodec());
-		ch.pipeline().addLast(
-		// 不显示log，打印log需要在这里打开注释
-				new HttpServerFrontendHandler());
+		ch.pipeline().addLast(new HttpServerFrontendHandler());
 
 	}
 }
