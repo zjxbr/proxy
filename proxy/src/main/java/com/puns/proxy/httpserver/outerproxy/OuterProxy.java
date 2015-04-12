@@ -1,10 +1,5 @@
 package com.puns.proxy.httpserver.outerproxy;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufAllocator;
-import io.netty.buffer.PooledByteBufAllocator;
-import io.netty.channel.Channel;
-
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,23 +21,11 @@ public class OuterProxy {
 	// 域名访问信息
 	private ConcurrentHashMap<String, DomainInfo> domainInfoMap = new ConcurrentHashMap<>();
 
-//	private final ByteBuf bs1;
-
 	public OuterProxy(String host, int port) {
 		super();
 		this.host = host;
 		this.port = port;
-//		String proxyPuns = "\nProxyPuns: " + host + "," + port;
-//		ByteBufAllocator byteBufAllocator = new PooledByteBufAllocator();
-//		bs1 = byteBufAllocator.buffer(proxyPuns.length());
-//		bs1.writeBytes(proxyPuns.getBytes());
 	}
-
-//	public synchronized void write(Channel inboundChannel) {
-//		bs1.markReaderIndex();
-//		inboundChannel.write(bs1);
-//		bs1.markReaderIndex();
-//	}
 
 	public class DomainInfo {
 		// 平均访问时间

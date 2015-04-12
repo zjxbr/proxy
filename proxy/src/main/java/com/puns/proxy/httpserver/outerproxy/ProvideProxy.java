@@ -1,10 +1,11 @@
 package com.puns.proxy.httpserver.outerproxy;
 
-
 /**
  * @author zjx
  */
 public interface ProvideProxy {
+
+	public void initProxy(OuterProxy outerProxy);
 
 	/**
 	 * @function 根据域名返回代理

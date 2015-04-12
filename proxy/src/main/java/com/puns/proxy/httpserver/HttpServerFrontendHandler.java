@@ -3,6 +3,7 @@ package com.puns.proxy.httpserver;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufProcessor;
+import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -17,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import com.puns.proxy.httpserver.outerproxy.OuterProxy;
 import com.puns.proxy.httpserver.outerproxy.ProvideProxy;
 import com.puns.proxy.httpserver.outerproxy.ProvideProxyByHeap;
+import com.puns.proxy.util.ByteBufUtil0;
 import com.puns.proxy.util.URLUtils;
 
 /**
@@ -25,12 +27,12 @@ import com.puns.proxy.util.URLUtils;
  */
 public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 
-	private static final String HTTP_987_MAXCONN = "HTTP/1.1 987 MAXCONN\n";
-
-	private static final String HTTP_988_PROXYMAXTRY = "HTTP/1.1 988 PROXYMAXTRY\n";
-
 	private static final Logger LOG = LoggerFactory
 			.getLogger(HttpServerFrontendHandler.class);
+
+	private static final String HTTP_987_OVER_MAXCONN = "HTTP/1.1 987 OVERMAXCONN\r\n";
+
+	private static final String HTTP_988_PROXYMAXTRY = "HTTP/1.1 988 PROXYMAXTRY\r\n";
 
 	private static volatile int channelInWorkingCnt = 0;
 	private static final int maxActive = 100;
@@ -51,12 +53,11 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 		// 判断在工作的channel是否已经超过限制了，如果超过了，就返回LOCKED并且closechannel
 		if (channelInWorkingCnt >= maxActive) {
 
-			System.out.println("连接数超了");
+			LOG.warn("too many connections.");
 
-			String rtn = HTTP_987_MAXCONN;
-
-			ByteBuf byteBuf = ctx.alloc().heapBuffer(rtn.getBytes().length);
-			byteBuf.writeBytes(rtn.getBytes());
+			ByteBuf byteBuf = ctx.alloc().heapBuffer(
+					HTTP_987_OVER_MAXCONN.getBytes().length);
+			byteBuf.writeBytes(HTTP_987_OVER_MAXCONN.getBytes());
 
 			ctx.channel().writeAndFlush(byteBuf);
 			ctx.channel().close();
@@ -95,36 +96,30 @@ public class HttpServerFrontendHandler extends ChannelInboundHandlerAdapter {
 	@Override
 	public void channelRead(final ChannelHandlerContext ctx, final Object msg)
 			throws Exception {
-		// 如果已经连接的通道，则直接写入
-		if (outboundChannel != null && outboundChannel.isActive()) {
-			outboundChannel.writeAndFlush(msg);
-			return ;
-		}
-		// 获取第一行
 		final ByteBuf byteBuf = (ByteBuf) msg;
+		// if the outboundchannel is active,
+		// continueours write to the outboundchannel.
+		if (outboundChannel != null && outboundChannel.isActive()) {
+			if (LOG.isDebugEnabled()) {
+				LOG.debug(ByteBufUtil0.byteBufToString(byteBuf));
+			}
+			outboundChannel.writeAndFlush(msg);
+			return;
+		}
+
 		byteBuf.markReaderIndex();
-
-		int writeIndex = byteBuf.writerIndex();
-		byte[] request = new byte[writeIndex];
-		byteBuf.readBytes(request);
-		System.out.println(new String(request));
-
-		byteBuf.resetReaderIndex();
-
 		int indexCRLF = byteBuf.forEachByte(ByteBufProcessor.FIND_CRLF);
-
 		byte[] requestURLBytes = new byte[indexCRLF];
 		byteBuf.readBytes(requestURLBytes);
 		byteBuf.resetReaderIndex();
 		String firstLine = new String(requestURLBytes);
-		// 第一行格式如下
-		// GET
-		// http://www.amazon.co.jp/gp/aag/details/ref=aag_m_ss?ie=UTF8&seller=A001665895YWGQJVAG98
-		// HTTP/1.1
 		String domain = URLUtils.getDomain(firstLine);
 		LOG.info("request  : " + firstLine);
-		// LOG.info("request domain : " + domain);
-		// System.err.println("reading");
+
+		if (LOG.isDebugEnabled()) {
+			// print the http request
+			LOG.debug(ByteBufUtil0.byteBufToString(byteBuf));
+		}
 
 		tryToConnectProxy(ctx, byteBuf, domain, 3);
 

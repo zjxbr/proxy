@@ -79,7 +79,6 @@ public class HttpServerBackendHandler extends ChannelInboundHandlerAdapter {
 				// 设置以后读取不是第一行
 				firstLine = false;
 
-				
 				inboundChannel.write(byteBuf.readBytes(indexCRLF));
 				
 				// // 设置代理header

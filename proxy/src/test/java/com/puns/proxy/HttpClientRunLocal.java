@@ -20,18 +20,18 @@ public class HttpClientRunLocal {
 	public static void main(String[] args) throws InterruptedException {
 
 		List<String> urList = new ArrayList<>();
-		urList.add("http://www.amazon.co.jp/");
-		// urList.add("http://www.amazon.co.jp/");
-		// urList.add("http://www.amazon.co.jp/");
-		// urList.add("http://kakaku.com/");
-		// urList.add("http://tabelog.com/tokyo/");
-		// urList.add("http://photohito.com/");
+		urList.add("http://www.sohu.com/");
+		urList.add("http://www.sohu.com/");
+		urList.add("http://www.sohu.com/");
+		urList.add("http://www.sohu.com/");
+		urList.add("http://www.sohu.com/");
+		urList.add("http://www.sohu.com/");
 
 		for (int i = 0; i < urList.size(); i++) {
 
 			Thread thread = new Thread(new HTTPRunnable(urList.get(i)));
 			thread.start();
-			Thread.sleep(1000);
+			Thread.sleep(100);
 		}
 	}
 

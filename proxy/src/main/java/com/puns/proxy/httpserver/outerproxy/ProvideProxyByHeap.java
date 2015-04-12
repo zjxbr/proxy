@@ -1,8 +1,5 @@
 package com.puns.proxy.httpserver.outerproxy;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,35 +34,12 @@ public class ProvideProxyByHeap implements ProvideProxy {
 		return instance;
 	}
 
-	private void init() {
-
-		BufferedReader reader = null;
-		try {
-			reader = new BufferedReader(new FileReader("/tmp/proxys100.txt"));
-
-			String line;
-			String[] cells;
-			while ((line = reader.readLine()) != null) {
-				line = line.trim();
-				if (!line.isEmpty()) {
-					cells = line.split(" ");
-					System.out.println(cells[0] + "," + cells[1]);
-					// 初始化 outerProxies
-					OuterProxy outerProxy = new OuterProxy(cells[0],
-							Integer.valueOf(cells[1]));
-
-					outerProxies.add(outerProxy);
-				}
-			}
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-
+	@Override
+	public void initProxy(OuterProxy outerProxy) {
+		this.outerProxies.add(outerProxy);
 	}
 
 	private ProvideProxyByHeap() {
-		init();
 	}
 
 	@Override
