@@ -5,7 +5,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PunsConcurrentUtils {
 
 	/**
-	 * @function put到同步map，如果map中已经存在，则不put，并且返回已经存在的值，如果不存在，则put，返回自己
+	 * @function put to the concurrentHashMap, if exist , return self
 	 * @param concurrentHashMap
 	 * @param k
 	 * @param v

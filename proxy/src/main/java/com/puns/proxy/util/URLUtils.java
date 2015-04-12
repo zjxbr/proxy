@@ -3,7 +3,7 @@ package com.puns.proxy.util;
 public class URLUtils {
 
 	/**
-	 * @function 获取域名
+	 * @function get the domain
 	 * @param urlOrSomething
 	 * @return
 	 */
