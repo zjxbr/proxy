@@ -1,19 +1,10 @@
 package com.puns.proxy;
 
 import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.Socket;
-import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
-
-import org.apache.commons.httpclient.DefaultHttpMethodRetryHandler;
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpStatus;
-import org.apache.commons.httpclient.methods.GetMethod;
-import org.apache.commons.httpclient.params.HttpMethodParams;
 
 /**
  * Hello world!
@@ -44,7 +35,7 @@ public class SocketRun {
 
 		@Override
 		public void run() {
-
+			System.out.println(url);
 			Socket socket;
 			try {
 				socket = new Socket("localhost", 3128);
